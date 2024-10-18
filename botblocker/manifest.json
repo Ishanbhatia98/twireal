@@ -1,0 +1,18 @@
+{
+  "manifest_version": 2,
+  "name": "Twitter Bot Remover",
+  "version": "1.0",
+  "description": "Removes posts/comments from potential bots on Twitter",
+  "permissions": [
+    "activeTab",
+    "https://twitter.com/*",
+    "https://x.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://twitter.com/*", "*://x.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
