@@ -1,18 +1,28 @@
 {
-  "manifest_version": 2,
-  "name": "Twitter Bot Remover",
+  "manifest_version": 3,
+  "name": "BotBlocker",
   "version": "1.0",
-  "description": "Removes posts/comments from potential bots on Twitter",
+  "description": "Block potential bot accounts on X (Twitter)",
   "permissions": [
     "activeTab",
-    "https://twitter.com/*",
+    "scripting"
+  ],
+  "host_permissions": [
     "https://x.com/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
-      "matches": ["*://twitter.com/*", "*://x.com/*"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
+      "matches": ["https://x.com/*"],
+      "js": ["content.js"]
     }
-  ]
+  ],
+  "action": {},
+  "icons": {
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  }
 }

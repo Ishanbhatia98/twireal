@@ -1,0 +1,13 @@
+// Find all tweets on the page
+const tweets = document.querySelectorAll('div[data-testid="cellInnerDiv"]');
+
+tweets.forEach(tweet => {
+    // Check for the specific username link inside each tweet
+    const userLink = tweet.querySelector('a[href="/ankurnagpal"]');
+
+    // If the tweet belongs to this specific user, hide it
+    if (userLink) {
+        tweet.style.display = 'none';  // Hides the tweet from the feed
+        console.log('Tweet from /ankurnagpal hidden.');
+    }
+});
