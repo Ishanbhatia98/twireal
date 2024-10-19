@@ -1,4 +1,4 @@
-(function() {
+(function () {
   if (window.botBlockerInitialized) {
     console.log('BotBlocker: Already initialized, skipping');
     return;
@@ -11,99 +11,128 @@
   let hiddenPostsCount = 0;
   const blockedUsers = new Set();
 
+  // Load existing blocked users and hidden post counts
+  chrome.storage.local.get(['blockedUsers', 'hiddenPostsCount'], (data) => {
+    const { blockedUsers: storedBlockedUsers = [], hiddenPostsCount: storedHiddenPostsCount = 0 } = data;
+    storedBlockedUsers.forEach(user => blockedUsers.add(user));
+    hiddenPostsCount = storedHiddenPostsCount;
+    console.log(`BotBlocker: Loaded ${blockedUsers.size} blocked users and ${hiddenPostsCount} hidden posts.`);
+  });
+
+  // Function to check if a user is a potential bot based on followers/following ratio
   function isLikelyBot(userStats) {
     console.log('BotBlocker: Checking if user is a bot', userStats);
-    return true; // Temporarily return true for all users
+    // return true;
+    return userStats.followers < userStats.following;
   }
 
-  function extractUserStats(tweet) {
-    console.log('BotBlocker: Extracting user stats from tweet', tweet);
-    const statsElement = tweet.querySelector('[data-testid="UserCell-number"]');
+  // Extract user stats from the HTML elements
+  function extractUserStats(element) {
+    console.log('BotBlocker: Extracting user stats from element', element);
+    const statsElement = element.querySelector('[data-testid="UserCell-number"]');
     if (!statsElement) {
       console.log('BotBlocker: Could not find UserCell-number element');
       return null;
     }
 
     const statsText = statsElement.textContent;
-    console.log('BotBlocker: Found stats text:', statsText);
     const [followers, following] = statsText.split(' · ').map(num => parseInt(num.replace(/[^0-9]/g, ''), 10));
-
+    
     return { followers, following };
   }
 
-  function processTweet(tweet) {
-    console.log('BotBlocker: Processing tweet', tweet);
-    
-    // Try different selectors to find the username
-    const userElement = tweet.querySelector('div[data-testid="User-Name"] a[role="link"][href^="/"]') || 
-                        tweet.querySelector('a[role="link"][href^="/"]');
-    
+  // Hide the element containing the bot content
+  function hideElement(element, username) {
+    element.style.display = 'none';
+    hiddenPostsCount++;
+    console.log(`BotBlocker: Content from ${username} hidden. Total hidden: ${hiddenPostsCount}`);
+  }
+
+  // Process each element (post/comment) and check if the user is a bot
+  function processElement(element) {
+    const userElement = element.querySelector('div[data-testid="User-Name"] a[role="link"][href^="/"]') || 
+                        element.querySelector('a[role="link"][href^="/"]');
+
     if (!userElement) {
-      console.log('BotBlocker: Could not find user element in tweet');
+      console.log('BotBlocker: Could not find user element');
       return;
     }
 
-    const username = userElement.textContent.trim().split('@')[1] || userElement.textContent.trim();
-    console.log('BotBlocker: Found username:', username);
-    
-    if (!username) {
-      console.log('BotBlocker: Username is empty, skipping');
-      return;
-    }
+    const hrefAttr = userElement.getAttribute('href');
+    const username = hrefAttr ? hrefAttr.split('/')[1] : null;
 
-    if (processedUsers.has(username)) {
-      console.log('BotBlocker: User already processed, skipping');
+    if (!username || processedUsers.has(username)) {
+      console.log('BotBlocker: Username already processed or is empty, skipping');
       return;
     }
 
     processedUsers.add(username);
 
-    const userStats = extractUserStats(tweet) || { followers: 0, following: 0 };
-    console.log('BotBlocker: User stats:', userStats);
-
+    const userStats = extractUserStats(element) || { followers: 0, following: 0 };
     const isBot = isLikelyBot(userStats);
-    console.log(`BotBlocker: Evaluated user: ${username} - Bot: ${isBot ? 'Yes' : 'No'} (Followers: ${userStats.followers}, Following: ${userStats.following})`);
 
     if (isBot) {
-      console.log(`BotBlocker: Attempting to hide tweet from bot: ${username}`);
-      tweet.style.display = 'none';
-      hiddenPostsCount++;
       blockedUsers.add(username);
-      console.log(`BotBlocker: Tweet hidden. New hidden count: ${hiddenPostsCount}`);
+      hideElement(element, username);
     }
   }
 
-  function processTweets() {
-    const tweets = document.querySelectorAll('[data-testid="cellInnerDiv"]');
-    console.log(`BotBlocker: Found ${tweets.length} tweets to process`);
-    tweets.forEach((tweet, index) => {
-      console.log(`BotBlocker: Processing tweet ${index + 1} of ${tweets.length}`);
-      processTweet(tweet);
+  // Process all posts and comments on the page
+  function processContent() {
+    const posts = document.querySelectorAll('div[data-testid="cellInnerDiv"]');
+    posts.forEach(post => processElement(post));
+
+    const comments = document.querySelectorAll('div[data-testid="tweet"]');
+    comments.forEach(comment => processElement(comment));
+
+    hideBlockedUsersContent();
+  }
+
+  // Hide content from blocked users
+  function hideBlockedUsersContent() {
+    const elements = document.querySelectorAll('div[data-testid="cellInnerDiv"], div[data-testid="tweet"]');
+    elements.forEach(element => {
+      const userLink = element.querySelector('div[data-testid="User-Name"] a[role="link"][href^="/"]') ||
+                       element.querySelector('a[role="link"][href^="/"]');
+      if (userLink) {
+        const hrefAttr = userLink.getAttribute('href');
+        const username = hrefAttr ? hrefAttr.split('/')[1] : null;
+        if (username && blockedUsers.has(username)) {
+          hideElement(element, username);
+        }
+      }
     });
   }
 
-  function logBlockedStatus() {
-    console.log(`BotBlocker: Currently hidden ${hiddenPostsCount} posts/comments`);
-    console.log(`BotBlocker: Blocked users: ${Array.from(blockedUsers).join(', ')}`);
+  // Throttle storage updates to avoid frequent calls
+  let storageUpdatePending = false;
+  function updateStorage() {
+    if (!storageUpdatePending) {
+      storageUpdatePending = true;
+      setTimeout(() => {
+        chrome.storage.local.set({
+          blockedUsers: Array.from(blockedUsers),
+          hiddenPostsCount: hiddenPostsCount
+        }, () => {
+          if (chrome.runtime.lastError) {
+            console.error('BotBlocker: Error updating storage:', chrome.runtime.lastError.message);
+          } else {
+            console.log('BotBlocker: Storage updated successfully');
+          }
+          storageUpdatePending = false;  // Reset throttle flag
+        });
+      }, 3000); // Throttle updates to every 3 seconds max
+    }
   }
 
-  // Call processTweets initially
-  console.log('BotBlocker: Performing initial tweet processing');
-  processTweets();
-  logBlockedStatus();
+  // Process initial content on page load
+  processContent();
+  updateStorage();
 
-  // Set up scroll listener
-  window.addEventListener('scroll', () => {
-    console.log('BotBlocker: Scroll detected, processing tweets');
-    processTweets();
-    logBlockedStatus();
-  });
-
-  // Set up MutationObserver
-  const observer = new MutationObserver((mutations) => {
-    console.log('BotBlocker: DOM mutation detected, processing tweets');
-    processTweets();
-    logBlockedStatus();
+  // Set up observer to watch for new content (e.g., infinite scrolling)
+  const observer = new MutationObserver(() => {
+    processContent();
+    updateStorage();
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
