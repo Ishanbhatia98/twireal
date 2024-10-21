@@ -1,0 +1,8 @@
+1. Can use declarative content api to apply permissions based on the page opened by the user.
+2. Can use Native Messaging to actually evaluate a user as a bot or not.
+3. Currently the extension, initializes only once when the page is visited, 
+    it does not activate when the user is scrolling through his wall on the
+    twitter page -  A mutation observer is being used for detecting scrolling - 
+    when new content is detected in the DOM of the page, the script is rerun
+4. Twitters HomeTimeLine API is fetched via service worker and not directly accessed on the page,
+ this causes issues to interact with it in the extension code.

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BotBlocker</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        h1 { font-size: 24px; }
+        .status { margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>BotBlocker</h1>
+    <label>
+        <input type="checkbox" id="toggleSwitch">
+        BotBlocker is <span id="status">off</span>
+    </label>
+    <p id="hiddenCount">Hidden posts/comments: 0</p>
+    <h2>Blocked Users:</h2>
+    <ul id="blockedList">
+        <li>No users blocked</li>
+    </ul>
+
+    <script src="popup.js"></script>
+</body>
+</html>

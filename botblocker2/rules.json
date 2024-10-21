@@ -1,0 +1,17 @@
+[
+    {
+      "id": 1,
+      "priority": 1,
+      "action": {
+        "type": "modifyHeaders",  
+        "requestHeaders": [
+          { "header": "User-Agent", "operation": "remove" }
+        ]
+      },
+      "condition": {
+        "urlFilter": "https://x.com/i/api/graphql/HomeLatestTimeline", 
+        "resourceTypes": ["xmlhttprequest"]
+      }
+    }
+  ]
+  

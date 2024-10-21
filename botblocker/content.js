@@ -12,31 +12,36 @@
   const blockedUsers = new Set();
 
   // Load existing blocked users and hidden post counts
-  chrome.storage.local.get(['blockedUsers', 'hiddenPostsCount'], (data) => {
-    const { blockedUsers: storedBlockedUsers = [], hiddenPostsCount: storedHiddenPostsCount = 0 } = data;
-    storedBlockedUsers.forEach(user => blockedUsers.add(user));
-    hiddenPostsCount = storedHiddenPostsCount;
-    console.log(`BotBlocker: Loaded ${blockedUsers.size} blocked users and ${hiddenPostsCount} hidden posts.`);
-  });
+  // chrome.storage.local.get(['blockedUsers', 'hiddenPostsCount'], (data) => {
+  //   const { blockedUsers: storedBlockedUsers = [], hiddenPostsCount: storedHiddenPostsCount = 0 } = data;
+  //   storedBlockedUsers.forEach(user => blockedUsers.add(user));
+  //   hiddenPostsCount = storedHiddenPostsCount;
+  //   console.log(`BotBlocker: Loaded ${blockedUsers.size} blocked users and ${hiddenPostsCount} hidden posts.`);
+  // });
 
   // Function to check if a user is a potential bot based on followers/following ratio
   function isLikelyBot(userStats) {
     console.log('BotBlocker: Checking if user is a bot', userStats);
     // return true;
-    return userStats.followers < userStats.following;
+    return userStats.following > userStats.followers;
   }
 
   // Extract user stats from the HTML elements
-  function extractUserStats(element) {
-    console.log('BotBlocker: Extracting user stats from element', element);
+  function extractUserStats(element, username) {
+    console.log('BotBlocker: Extracting user stats from element for user', username);
+    
+    // this line extracts the user info containing tag from the DOM
     const statsElement = element.querySelector('[data-testid="UserCell-number"]');
     if (!statsElement) {
-      console.log('BotBlocker: Could not find UserCell-number element');
+      console.log(`BotBlocker: Could not find UserCell-number element for user: ${username}`);
       return null;
     }
-
+  
     const statsText = statsElement.textContent;
     const [followers, following] = statsText.split(' · ').map(num => parseInt(num.replace(/[^0-9]/g, ''), 10));
+    
+    // Log the username, followers, and following counts
+    console.log(`BotBlocker: Username: ${username}, Followers: ${followers}, Following: ${following}`);
     
     return { followers, following };
   }
@@ -62,13 +67,20 @@
     const username = hrefAttr ? hrefAttr.split('/')[1] : null;
 
     if (!username || processedUsers.has(username)) {
-      console.log('BotBlocker: Username already processed or is empty, skipping');
+      if(processedUsers.has(username)){
+      console.log(`BotBlocker: Username ${username} already processed, blocked:${blockedUsers.has(username)}`);
+      } else{
+        console.log(`BotBlocker: Username ${username} could not be processed`);
+      }
       return;
     }
 
     processedUsers.add(username);
+    console.log(`BotBlocker: Processed users count: ${processedUsers.size}, Blocked users count: ${blockedUsers.size}`);
 
-    const userStats = extractUserStats(element) || { followers: 0, following: 0 };
+
+    const userStats = extractUserStats(element, username) || { followers: 0, following: 0 };
+
     const isBot = isLikelyBot(userStats);
 
     if (isBot) {
