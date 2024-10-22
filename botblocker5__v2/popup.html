@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>BotBlocker</title>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background-color: #f2f2f2; }
+  </style>
+</head>
+<body>
+  <h2>BotBlocker Settings</h2>
+  <label for="toggle-blocker">Turn BotBlocker On/Off:</label>
+  <input type="checkbox" id="toggle-blocker" checked><br><br>
+  
+  <label for="hide-blur">Hide or Blur Tweets:</label>
+  <select id="hide-blur">
+    <option value="hide">Hide</option>
+    <option value="blur">Blur</option>
+  </select><br><br>
+  
+  <h3>Blocked Accounts</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Tweets Blocked</th>
+      </tr>
+    </thead>
+    <tbody id="blocked-accounts">
+      <!-- Blocked accounts will be dynamically added here -->
+    </tbody>
+  </table>
+
+  <script src="popup.js"></script>
+</body>
+</html>
