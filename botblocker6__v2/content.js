@@ -1,6 +1,7 @@
 (function () {
   let blockedUsers = {};
   let hideOrBlur = 'hide'; // Default action is to hide tweets
+  let apiDataProcessed = false; // Flag to track if API data has been processed
   const loadDelay = 7000; // Delay of 7 seconds (adjust to 5-10 seconds as needed)
   const scrollDelay = 5000; // Delay of 5 seconds after scrolling
 
@@ -17,17 +18,20 @@
     window.addEventListener('load', function () {
       setTimeout(() => {
         console.log(`BotBlocker: Running after ${loadDelay / 1000} seconds delay...`);
-        observeTimeline();
-        processTimelineFromDOM(); // Initial processing
+        processTimelineFromDOM(); // Initial DOM processing
       }, loadDelay);
     });
 
     // Add scroll event listener with a delay before processing tweets
     window.addEventListener('scroll', debounce(() => {
-      setTimeout(() => {
-        console.log(`BotBlocker: Running 5 seconds after scrolling...`);
-        processTimelineFromDOM();
-      }, scrollDelay);
+      if (apiDataProcessed) { // Only process DOM if API data has been fetched
+        setTimeout(() => {
+          console.log(`BotBlocker: Running 5 seconds after scrolling...`);
+          processTimelineFromDOM();
+        }, scrollDelay);
+      } else {
+        console.warn("BotBlocker: Skipping tweet processing since API data hasn't been processed yet.");
+      }
     }, scrollDelay));
   }
 
@@ -40,44 +44,118 @@
     };
   }
 
-  // Mutation Observer to watch for new tweets being added to the timeline
-  function observeTimeline() {
-    const targetNode = document.querySelector('section[aria-labelledby="accessible-list-2"]'); // Adjust selector if needed
-    if (!targetNode) {
-      console.error("BotBlocker: Timeline section not found.");
+  // Process the HomeLatestTimeline API payload
+  chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
+    if (request.message === "process_homelatest_timeline") {
+      const url = request.url;
+      const headers = request.headers;
+      const payload = request.payload;
+
+      console.log("BotBlocker: Received HomeLatestTimeline API data.");
+      console.log("BotBlocker: URL:", url);
+      console.log("BotBlocker: Headers:", headers);
+      console.log("BotBlocker: Payload:", payload);
+
+      fetchHomeLatestTimeline(url, headers, payload);
+    }
+
+    if (request.message === "reprocess_tweets") {
+      if (apiDataProcessed) {
+        processTimelineFromDOM();
+      } else {
+        console.warn("BotBlocker: Cannot reprocess tweets without API data.");
+      }
+    }
+
+    if (request.message === "update_settings") {
+      hideOrBlur = request.hideOrBlur;
+      console.log(`BotBlocker: Settings updated - Action: ${hideOrBlur}`);
+    }
+  });
+
+  // Function to make the API call to HomeLatestTimeline and process the response
+  function fetchHomeLatestTimeline(url, headers, payload) {
+    const fetchHeaders = new Headers();
+    headers.forEach(header => {
+      fetchHeaders.append(header.name, header.value);
+    });
+
+    // Make the API call
+    fetch(url, {
+      method: 'POST',
+      credentials: 'include', // Include credentials like cookies
+      headers: fetchHeaders,
+      body: JSON.stringify(payload) // Sending the payload in the body
+    })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json(); // Parse the JSON response
+      })
+      .then(data => {
+        console.log("BotBlocker: Successfully fetched HomeLatestTimeline API response:", data);
+        processTimelineFromAPI(data); // Pass the response data to be processed
+      })
+      .catch(error => {
+        console.error("BotBlocker: Error fetching HomeLatestTimeline API data:", error);
+      });
+  }
+
+  // Process the API response to cache user data
+  function processTimelineFromAPI(data) {
+    const instructions = data?.data?.home?.home_timeline_urt?.instructions || [];
+
+    if (instructions.length === 0) {
+      console.warn("BotBlocker: No instructions found in the API response.");
       return;
     }
 
-    const observerConfig = { childList: true, subtree: true };
+    console.log(`BotBlocker: ${instructions.length} instructions to process...`);
 
-    const observer = new MutationObserver((mutationsList) => {
-      for (const mutation of mutationsList) {
-        if (mutation.addedNodes.length) {
-          console.log("BotBlocker: New tweets detected in DOM...");
-          setTimeout(() => processTimelineFromDOM(), scrollDelay); // Trigger processing with a delay
+    instructions.forEach(instruction => {
+      const entries = instruction?.entries || [];
+      console.log(`BotBlocker: ${entries.length} entries to process in the HomeTimeline API...`);
+      entries.forEach(entry => {
+        const tweetResults = entry?.content?.itemContent?.tweet_results?.result?.core?.user_results?.result;
+        if (tweetResults) {
+          const username = tweetResults?.legacy?.screen_name;
+          const followersCount = tweetResults?.legacy?.followers_count;
+          const followingCount = tweetResults?.legacy?.friends_count;
+
+          // Store user data to be retrieved when processing DOM
+          storeUserData(username, followersCount, followingCount);
+
+          // Log user data
+          console.log(`BotBlocker: Processed user ${username} - Followers: ${followersCount}, Following: ${followingCount}`);
+        } else {
+          console.warn("BotBlocker: Tweet results not found for entry.");
         }
-      }
+      });
     });
 
-    observer.observe(targetNode, observerConfig);
-    console.log("BotBlocker: Mutation observer started.");
+    apiDataProcessed = true; // Mark API data as processed
   }
 
   // Define the processTimelineFromDOM function to scan the DOM for tweets
   function processTimelineFromDOM() {
+    if (!apiDataProcessed) {
+      console.warn("BotBlocker: Skipping tweet processing since API data hasn't been processed yet.");
+      return;
+    }
+
     console.log("BotBlocker: Scanning DOM for tweets...");
     const tweets = document.querySelectorAll('div[data-testid="cellInnerDiv"]');
-    console.log(`BotBlocker: ${tweets.length} tweets to process...`);
+    console.log(`BotBlocker: Found ${tweets.length} tweets in the DOM.`);
 
     tweets.forEach(tweet => {
       const usernameLink = tweet.querySelector('a[href*="/"]');
       if (usernameLink) {
         const username = usernameLink.getAttribute('href').split('/').pop();
 
-        // Use the username to match API data instead of using the DOM for follower/following count
-        const userData = getUserDataFromAPI(username);
+        const userData = getUserDataFromCache(username);
         if (!userData) {
-          console.error(`BotBlocker: No user data found for ${username}`);
+          console.warn(`BotBlocker: No data found in cache for ${username}. Skipping tweet.`);
           return;
         }
 
@@ -98,67 +176,8 @@
     });
   }
 
-  // Handle message from background.js for HomeLatestTimeline
-  chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
-    if (request.message === "process_homelatest_timeline") {
-      const url = request.url;
-      const headers = request.headers;
-      const payload = request.payload;
-
-      console.log("BotBlocker: Received HomeLatestTimeline API data.");
-      console.log("URL:", url);
-      console.log("Headers:", headers);
-      console.log("Payload:", payload);
-
-      processTimelineFromAPI(payload);
-    }
-
-    if (request.message === "reprocess_tweets") {
-      processTimelineFromDOM();
-    }
-
-    if (request.message === "update_settings") {
-      hideOrBlur = request.hideOrBlur;
-      console.log(`BotBlocker: Settings updated - Action: ${hideOrBlur}`);
-    }
-  });
-
-  // Process timeline from API payload
-  function processTimelineFromAPI(data) {
-    console.log("BotBlocker: Processing HomeLatestTimeline API response...");
-    const instructions = data?.data?.home?.home_timeline_urt?.instructions || [];
-
-    if (instructions.length === 0) {
-      console.warn("BotBlocker: No instructions found in the API response.");
-      return;
-    }
-
-    console.log(`BotBlocker: ${instructions.length} instructions to process...`);
-
-    instructions.forEach(instruction => {
-      const entries = instruction?.entries || [];
-      console.log(`BotBlocker: ${entries.length} entries to process in the HomeTimeLine API...`);
-      entries.forEach(entry => {
-        const tweetResults = entry?.content?.itemContent?.tweet_results?.result?.core?.user_results?.result;
-        if (tweetResults) {
-          const username = tweetResults?.legacy?.screen_name;
-          const followersCount = tweetResults?.legacy?.followers_count;
-          const followingCount = tweetResults?.legacy?.friends_count;
-
-          // Store user data to be retrieved when processing DOM
-          storeUserData(username, followersCount, followingCount);
-
-          // Log user data
-          console.log(`BotBlocker: Processed user ${username} - Followers: ${followersCount}, Following: ${followingCount}`);
-        } else {
-          console.warn("BotBlocker: Tweet results not found for entry.");
-        }
-      });
-    });
-  }
-
   function isBot(followersCount, followingCount) {
-    return followingCount > followersCount * 100;
+    return followingCount  < followersCount * 1000;
   }
 
   function hideOrBlurTweet(tweetElement) {
@@ -180,10 +199,10 @@
     userCache[username] = { followersCount, followingCount };
   }
 
-  function getUserDataFromAPI(username) {
+  function getUserDataFromCache(username) {
     const userData = userCache[username];
     if (!userData) {
-      console.error(`BotBlocker: No data found in userCache for ${username}`);
+      console.error(`BotBlocker: No data found in cache for ${username}`);
     }
     return userData;
   }
