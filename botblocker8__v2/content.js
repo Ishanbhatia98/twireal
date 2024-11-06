@@ -5,6 +5,8 @@
   let apiCallMade = false; // Flag to track if API call has been made (updated to prevent multiple requests)
   const loadDelay = 3000; // Delay of 3 seconds (adjust to 5-10 seconds as needed)
   const scrollDelay = 2000; // Delay of 2 seconds after scrolling
+  let retryCount = 0;
+  const maxRetries = 3;
 
   function initializeBotBlocker() {
     if (window.botBlockerInitialized) {
@@ -15,8 +17,9 @@
     window.botBlockerInitialized = true;
     console.log("BotBlocker: Content script started.");
 
-    // Trigger the script after a delay when the page is fully loaded
+    // Reset flags on page load
     window.addEventListener('load', function () {
+      resetFlags(); // Reset flags after page load
       setTimeout(() => {
         console.log(`BotBlocker: Running after ${loadDelay / 1000} seconds delay...`);
         processTimelineFromDOM(); // Initial DOM processing
@@ -27,13 +30,21 @@
     window.addEventListener('scroll', debounce(() => {
       if (apiDataProcessed) { // Only process DOM if API data has been fetched
         setTimeout(() => {
-          console.log(`BotBlocker: Running 5 seconds after scrolling...`);
+          console.log("BotBlocker: Running after scrolling...");
           processTimelineFromDOM();
         }, scrollDelay);
       } else {
         console.warn("BotBlocker: Skipping tweet processing since API data hasn't been processed yet.");
       }
     }, scrollDelay));
+  }
+
+  // Reset all flags on load
+  function resetFlags() {
+    console.log("BotBlocker: Resetting flags...");
+    apiCallMade = false;
+    apiDataProcessed = false;
+    retryCount = 0;
   }
 
   // Debounce to prevent excessive triggering during scroll
@@ -48,6 +59,7 @@
   // Process the HomeLatestTimeline API payload
   chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     if (request.message === "process_homelatest_timeline") {
+      console.log("BotBlocker: Received message to process HomeLatestTimeline");
       if (apiCallMade) {
         console.log("BotBlocker: API call already made, skipping.");
         return; // Prevent multiple API calls
@@ -59,12 +71,11 @@
       const headers = request.headers;
       const payload = request.payload;
 
-      console.log("BotBlocker: Received HomeLatestTimeline API data.");
       console.log("BotBlocker: URL:", url);
       console.log("BotBlocker: Headers:", headers);
       console.log("BotBlocker: Payload:", payload);
 
-      fetchHomeLatestTimeline(url, headers, payload);
+      fetchWithRetry(url, headers, payload); // Fetch data with retry mechanism
     }
 
     if (request.message === "reprocess_tweets") {
@@ -81,34 +92,56 @@
     }
   });
 
-  // Function to make the API call to HomeLatestTimeline and process the response
-  function fetchHomeLatestTimeline(url, headers, payload) {
+  // Retry logic to handle failed API calls
+  function fetchWithRetry(url, headers, payload) {
     const fetchHeaders = new Headers();
     headers.forEach(header => {
       fetchHeaders.append(header.name, header.value);
     });
 
-    // Make the API call
-    fetch(url, {
-      method: 'POST',
-      credentials: 'include', // Include credentials like cookies
-      headers: fetchHeaders,
-      body: JSON.stringify(payload) // Sending the payload in the body
-    })
-      .then(response => {
-        if (!response.ok) {
-          apiCallMade = false; // Reset flag if there was an error to allow retries
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return response.json(); // Parse the JSON response
+    // Ensure the request is only retried a maximum of `maxRetries` times
+    function attemptFetch(retryCount) {
+      console.log(`BotBlocker: Attempting fetch, retryCount: ${retryCount}`);
+      fetch(url, {
+        method: 'POST',
+        credentials: 'include', // Include credentials like cookies
+        headers: fetchHeaders,
+        body: JSON.stringify(payload) // Sending the payload in the body
       })
-      .then(data => {
-        console.log("BotBlocker: Successfully fetched HomeLatestTimeline API response:", data);
-        processTimelineFromAPI(data); // Pass the response data to be processed
-      })
-      .catch(error => {
-        console.error("BotBlocker: Error fetching HomeLatestTimeline API data:", error);
-      });
+        .then(response => {
+          if (!response.ok) {
+            if (response.status === 403) {
+              console.error("403 Forbidden: Check API permissions or authentication.");
+            } else if (response.status === 400) {
+              console.error("400 Bad Request: Likely a payload or headers issue.");
+            }
+
+            if (retryCount < maxRetries) {
+              console.log(`Retry attempt ${retryCount + 1}`);
+              setTimeout(() => attemptFetch(retryCount + 1), 1000 * (retryCount + 1)); // Retry with delay
+            } else {
+              console.error("Max retry attempts reached.");
+              apiCallMade = false; // Reset for future API requests
+            }
+            return;
+          }
+          return response.json();
+        })
+        .then(data => {
+          if (data) {
+            console.log("BotBlocker: Successfully fetched HomeLatestTimeline API response:", data);
+            processTimelineFromAPI(data); // Pass the response data to be processed
+            apiCallMade = false; // Allow future API requests
+          }
+        })
+        .catch(error => {
+          console.error("Error fetching HomeLatestTimeline API data:", error);
+          apiCallMade = false; // Reset in case of failure
+        });
+    }
+
+    // Begin first attempt
+    attemptFetch(0); // Retry count starts from 0
   }
 
   // Process the API response to cache user data
@@ -132,10 +165,8 @@
           const followersCount = tweetResults?.legacy?.followers_count;
           const followingCount = tweetResults?.legacy?.friends_count;
 
-          // Store user data to be retrieved when processing DOM
-          storeUserData(username, followersCount, followingCount);
+          storeUserData(username, followersCount, followingCount); // Store user data
 
-          // Log user data
           console.log(`BotBlocker: Processed user ${username} - Followers: ${followersCount}, Following: ${followingCount}`);
         } else {
           console.warn("BotBlocker: Tweet results not found for entry.");
@@ -144,6 +175,7 @@
     });
 
     apiDataProcessed = true; // Mark API data as processed
+    console.log("BotBlocker: API data processed, ready to scan DOM.");
   }
 
   // Define the processTimelineFromDOM function to scan the DOM for tweets
@@ -171,7 +203,6 @@
         const followersCount = userData.followersCount || 0;
         const followingCount = userData.followingCount || 0;
 
-        // Log each user being processed from DOM
         console.log(`BotBlocker: Processing user ${username} from DOM - Followers: ${followersCount}, Following: ${followingCount}`);
 
         if (isBot(followersCount, followingCount)) {
